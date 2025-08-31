@@ -1,0 +1,10 @@
+azure-functions
+azure-functions-durable>=1.2.4
+pandas
+numpy
+requests
+jsonschema
+reportlab
+azure-storage-blob
+python-dateutil
+azure-identity

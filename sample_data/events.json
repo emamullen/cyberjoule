@@ -1,0 +1,14 @@
+$body  = Get-Content .\sample_data\events.json -Raw
+$start = Invoke-RestMethod -Uri "http://localhost:7071/api/start-analysis" `
+                           -Method POST -ContentType "application/json" -Body $body
+
+# poll until Completed
+do {
+  Start-Sleep 2
+  $status = Invoke-RestMethod -Uri $start.statusQueryGetUri
+  "Status: $($status.runtimeStatus)"
+} while ($status.runtimeStatus -notin @("Completed","Failed","Terminated"))
+
+# open the PDF
+$status.output.report.download_url
+Start-Process ("http://localhost:7071" + $status.output.report.download_url)
