@@ -14,9 +14,9 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 dfapp = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 # -------------------- Health check -----------------------
-@app.route(route="ping", methods=[func.HttpMethod.GET])
-def ping(req: func.HttpRequest) -> func.HttpResponse:
-    return func.HttpResponse("pong")
+#a@app.route(route="ping", methods=[func.HttpMethod.GET])
+#def ping(req: func.HttpRequest) -> func.HttpResponse:
+#    return func.HttpResponse("pong")
 
 
 # -------------------- HTTP Starter -----------------------
