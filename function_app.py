@@ -5,15 +5,16 @@ from typing import Any, Dict, List
 import azure.functions as func
 import azure.durable_functions as df
 
-# Local services
 from services import schema, eda, ioc, anomaly, providers, report, storage
 
 # Durable Functions app (Python v2 model)
 app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-@myApp.route(route="ping", methods=[func.HttpMethod.GET])
+# health check
+@app.route(route="ping", methods=[func.HttpMethod.GET])
 def ping(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse("pong")
+
 
 # ----------- HTTP Starter -----------
 @app.route(route="start-analysis", methods=[func.HttpMethod.POST])
