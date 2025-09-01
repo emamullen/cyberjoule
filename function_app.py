@@ -7,21 +7,20 @@ import azure.durable_functions as df
 
 from services import schema, eda, ioc, anomaly, providers, report, storage
 
-# --- Register non-durable triggers here (HTTP, Timer, etc.)
+# One app for HTTP/timers
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
-# --- Register durable orchestrator/activities/client here
+# One app for Durable (orchestrator + activities + client binding)
 dfapp = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-# -------------------- Health check --------------------
+# ---------------- Health ----------------
 @app.route(route="ping", methods=[func.HttpMethod.GET])
 def ping(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse("pong")
 
-# -------------------- HTTP Starter --------------------
+# ------------- HTTP Starter -------------
 @app.route(route="start-analysis", methods=[func.HttpMethod.POST])
-@dfapp.durable_client_input(client_name="client")
-async def http_start(
+@dfapp.durable_client_input(client_name="client")  # this is a binding, not a trigger
+async def start_analysis_http(
     req: func.HttpRequest,
     client: df.DurableOrchestrationClient,
 ) -> func.HttpResponse:
@@ -34,7 +33,7 @@ async def http_start(
     logging.info("Started orchestration with ID = '%s'.", instance_id)
     return client.create_check_status_response(req, instance_id)
 
-# -------------------- Report download --------------------
+# ------------- Report download ----------
 @app.route(route="report/{instance_id}", methods=[func.HttpMethod.GET])
 def get_report(req: func.HttpRequest) -> func.HttpResponse:
     instance_id = req.route_params.get("instance_id")
@@ -49,7 +48,7 @@ def get_report(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("Error fetching report")
         return func.HttpResponse(f"Error fetching report: {e}", status_code=500)
 
-# -------------------- Orchestrator --------------------
+# ---------------- Orchestrator ----------
 @dfapp.orchestration_trigger(context_name="context")
 def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, Any]:
     data = context.get_input()
@@ -58,7 +57,6 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
     eda_result = yield context.call_activity("ExploratoryAnalysisActivity", validated)
     iocs = yield context.call_activity("ExtractIndicatorsActivity", validated)
 
-    # Fan-out TI lookups per IoC
     tasks = [context.call_activity("ThreatIntelEnrichmentActivity", item) for item in iocs]
     ti_results = yield context.task_all(tasks)
 
@@ -88,7 +86,7 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
         "report": report_info,
     }
 
-# -------------------- Activities --------------------
+# ---------------- Activities ------------
 @dfapp.activity_trigger(input_name="data", name="ValidateSchemaActivity")
 def ValidateSchemaActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return schema.validate_and_normalize(data)
@@ -110,7 +108,7 @@ def AnomalyDetectionActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return anomaly.detect(data)
 
 @dfapp.activity_trigger(input_name="bundle")
-def RecommendationActivity(bundle: Dict[str, Any]) -> Dict[str, Any]:
+def RecommendationActivity(bundle: Dict[str, Any]):
     return report.recommendations(bundle)
 
 @dfapp.activity_trigger(input_name="bundle")
