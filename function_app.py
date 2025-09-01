@@ -7,15 +7,13 @@ import azure.durable_functions as df
 
 from services import schema, eda, ioc, anomaly, providers, report, storage
 
-# One app for HTTP
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-# One app for Durable (orchestrator + activities + client binding)
-dfapp = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+# Use ONE DFApp for all triggers/bindings (HTTP + Durable)
+app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 # -------------------- HTTP Starter --------------------
-# IMPORTANT: leave the HTTP trigger decorator CLOSEST to the function (last),
-# and put the durable client INPUT binding above it.
-@dfapp.durable_client_input(client_name="client")  # binding (not a trigger)
+# Order matters: trigger decorator (route) MUST be closest to `def`
+# and the durable client INPUT binding goes above it.
+@app.durable_client_input(client_name="client")  # binding (not a trigger)
 @app.route(route="start-analysis", methods=[func.HttpMethod.POST])  # the ONLY HTTP trigger
 async def start_analysis_http(
     req: func.HttpRequest,
@@ -46,7 +44,7 @@ def get_report(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(f"Error fetching report: {e}", status_code=500)
 
 # -------------------- Orchestrator --------------------
-@dfapp.orchestration_trigger(context_name="context", name="AnalysisOrchestrator")
+@app.orchestration_trigger(context_name="context", name="AnalysisOrchestrator")
 def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, Any]:
     data = context.get_input()
 
@@ -84,30 +82,30 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
     }
 
 # -------------------- Activities --------------------
-@dfapp.activity_trigger(input_name="data", name="ValidateSchemaActivity")
+@app.activity_trigger(input_name="data", name="ValidateSchemaActivity")
 def ValidateSchemaActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return schema.validate_and_normalize(data)
 
-@dfapp.activity_trigger(input_name="data", name="ExploratoryAnalysisActivity")
+@app.activity_trigger(input_name="data", name="ExploratoryAnalysisActivity")
 def ExploratoryAnalysisActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return eda.explore(data)
 
-@dfapp.activity_trigger(input_name="data", name="ExtractIndicatorsActivity")
+@app.activity_trigger(input_name="data", name="ExtractIndicatorsActivity")
 def ExtractIndicatorsActivity(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return ioc.extract_iocs(data)
 
-@dfapp.activity_trigger(input_name="ioc_item", name="ThreatIntelEnrichmentActivity")
+@app.activity_trigger(input_name="ioc_item", name="ThreatIntelEnrichmentActivity")
 def ThreatIntelEnrichmentActivity(ioc_item: Dict[str, Any]) -> Dict[str, Any]:
     return providers.enrich_ioc(ioc_item)
 
-@dfapp.activity_trigger(input_name="data", name="AnomalyDetectionActivity")
+@app.activity_trigger(input_name="data", name="AnomalyDetectionActivity")
 def AnomalyDetectionActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return anomaly.detect(data)
 
-@dfapp.activity_trigger(input_name="bundle", name="RecommendationActivity")
+@app.activity_trigger(input_name="bundle", name="RecommendationActivity")
 def RecommendationActivity(bundle: Dict[str, Any]):
     return report.recommendations(bundle)
 
-@dfapp.activity_trigger(input_name="bundle", name="ReportGenerationActivity")
+@app.activity_trigger(input_name="bundle", name="ReportGenerationActivity")
 def ReportGenerationActivity(bundle: Dict[str, Any]) -> Dict[str, Any]:
     return report.generate_pdf_and_upload(bundle)
