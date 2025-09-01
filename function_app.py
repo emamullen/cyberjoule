@@ -7,22 +7,22 @@ import azure.durable_functions as df
 
 from services import schema, eda, ioc, anomaly, providers, report, storage
 
-# ---------------------------------------------------------
-# Apps: one for normal triggers, one for Durable Functions
-# ---------------------------------------------------------
+# ---------------- Apps ----------------
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 dfapp = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-# -------------------- Health check -----------------------
-#a@app.route(route="ping", methods=[func.HttpMethod.GET])
-#def ping(req: func.HttpRequest) -> func.HttpResponse:
-#    return func.HttpResponse("pong")
+# ------------- Health -----------------
+@app.function_name(name="Ping")
+@app.route(route="ping", methods=[func.HttpMethod.GET])
+def ping(req: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse("pong")
 
-
-# -------------------- HTTP Starter -----------------------
-# IMPORTANT: binding decorator ABOVE, trigger decorator BELOW (closest to def)
-@dfapp.durable_client_input(client_name="client")
+# --------- HTTP Starter ---------------
+# NOTE: give the function its own name, and keep exactly one trigger.
+# Keep the HTTP trigger decorator directly above the def (Azure Functions expects the trigger to be the last/closest decorator).
+@app.function_name(name="StartAnalysisHttp")
 @app.route(route="start-analysis", methods=[func.HttpMethod.POST])
+@dfapp.durable_client_input(client_name="client")   # input binding (not a trigger)
 async def start_analysis_http(
     req: func.HttpRequest,
     client: df.DurableOrchestrationClient,
@@ -36,8 +36,8 @@ async def start_analysis_http(
     logging.info("Started orchestration with ID = '%s'.", instance_id)
     return client.create_check_status_response(req, instance_id)
 
-
-# -------------------- Report download --------------------
+# -------- Report download -------------
+@app.function_name(name="GetReport")
 @app.route(route="report/{instance_id}", methods=[func.HttpMethod.GET])
 def get_report(req: func.HttpRequest) -> func.HttpResponse:
     instance_id = req.route_params.get("instance_id")
@@ -52,9 +52,8 @@ def get_report(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("Error fetching report")
         return func.HttpResponse(f"Error fetching report: {e}", status_code=500)
 
-
-# -------------------- Orchestrator -----------------------
-@dfapp.orchestration_trigger(context_name="context")
+# ------------- Orchestrator ----------
+@dfapp.orchestration_trigger(context_name="context", name="AnalysisOrchestrator")
 def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, Any]:
     data = context.get_input()
 
@@ -62,7 +61,6 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
     eda_result = yield context.call_activity("ExploratoryAnalysisActivity", validated)
     iocs = yield context.call_activity("ExtractIndicatorsActivity", validated)
 
-    # Fan-out per IoC
     tasks = [context.call_activity("ThreatIntelEnrichmentActivity", it) for it in (iocs or [])]
     ti_results = yield context.task_all(tasks)
 
@@ -92,32 +90,31 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
         "report": report_info,
     }
 
-
-# -------------------- Activities ------------------------
+# -------------- Activities -----------
 @dfapp.activity_trigger(input_name="data", name="ValidateSchemaActivity")
 def ValidateSchemaActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return schema.validate_and_normalize(data)
 
-@dfapp.activity_trigger(input_name="data")
+@dfapp.activity_trigger(input_name="data", name="ExploratoryAnalysisActivity")
 def ExploratoryAnalysisActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return eda.explore(data)
 
-@dfapp.activity_trigger(input_name="data")
+@dfapp.activity_trigger(input_name="data", name="ExtractIndicatorsActivity")
 def ExtractIndicatorsActivity(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return ioc.extract_iocs(data)
 
-@dfapp.activity_trigger(input_name="ioc_item")
+@dfapp.activity_trigger(input_name="ioc_item", name="ThreatIntelEnrichmentActivity")
 def ThreatIntelEnrichmentActivity(ioc_item: Dict[str, Any]) -> Dict[str, Any]:
     return providers.enrich_ioc(ioc_item)
 
-@dfapp.activity_trigger(input_name="data")
+@dfapp.activity_trigger(input_name="data", name="AnomalyDetectionActivity")
 def AnomalyDetectionActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return anomaly.detect(data)
 
-@dfapp.activity_trigger(input_name="bundle")
+@dfapp.activity_trigger(input_name="bundle", name="RecommendationActivity")
 def RecommendationActivity(bundle: Dict[str, Any]):
     return report.recommendations(bundle)
 
-@dfapp.activity_trigger(input_name="bundle")
+@dfapp.activity_trigger(input_name="bundle", name="ReportGenerationActivity")
 def ReportGenerationActivity(bundle: Dict[str, Any]) -> Dict[str, Any]:
     return report.generate_pdf_and_upload(bundle)
