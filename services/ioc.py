@@ -1,14 +1,16 @@
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List, Set, Optional
 import re
 
 _IP_RE = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b")
 _URL_RE = re.compile(r"https?://[^\s\"']+")
 _SHA256_RE = re.compile(r"\b[a-fA-F0-9]{64}\b")
-_DOMAIN_RE = re.compile(r"\b(?:(?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)+[A-Za-z]{2,24}\b")
+_DOMAIN_RE = re.compile(r"\b(?:(?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)+(?:[A-Za-z]{2,63})\b")
 
-def _maybe_add(s: Set[str], value: str) -> None:
-    if value and isinstance(value, str):
-        s.add(value.strip())
+def _maybe_add(s: Set[str], value: Optional[str]) -> None:
+    if isinstance(value, str):
+        v = value.strip()
+        if v:
+            s.add(v)
 
 def extract_iocs(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     events = data.get("events", [])
@@ -35,13 +37,14 @@ def extract_iocs(data: Dict[str, Any]) -> List[Dict[str, Any]]:
             msg_no_urls = _URL_RE.sub(" ", msg)
             domains.update(_DOMAIN_RE.findall(msg_no_urls))
 
-        for u in list(urls):
-            try:
-                host = re.sub(r"^https?://", "", u).split("/")[0]
-                if _DOMAIN_RE.fullmatch(host):
-                    domains.add(host)
-            except Exception:
-                pass
+    # extract hostnames from URLs
+    for u in list(urls):
+        try:
+            host = re.sub(r"^https?://", "", u).split("/")[0]
+            if _DOMAIN_RE.fullmatch(host):
+                domains.add(host)
+        except Exception:
+            pass
 
     out: List[Dict[str, Any]] = []
     out += [{"type": "ip", "value": v} for v in sorted(ips)]
