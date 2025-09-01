@@ -36,9 +36,9 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}          # created by Deployment Center (OIDC) OR leave this step out if you will use publish profile
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: "31a604c2-0c9e-44c0-a7f9-57b840baeac8" # ${{ secrets.AZURE_CLIENT_ID }}          # created by Deployment Center (OIDC) OR leave this step out if you will use publish profile
+          tenant-id: "cec3eaaf-4195-44ee-b029-3bc6cc0136c6" #${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: "cebb1c59-b3c7-4dfb-977e-b08db81fa4e5" #${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # Use Functions action (NOT webapps-deploy). It triggers a remote build on Azure.
       - name: Deploy to Azure Functions
@@ -48,3 +48,4 @@ jobs:
           package: '.'
           # If you prefer publish profile auth instead of OIDC, add:
           # publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }}
+
