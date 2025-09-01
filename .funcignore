@@ -1,8 +1,30 @@
-.git*
-.vscode
+# Ignore local development folders
+.vscode/
+.venv/
+.venv312/
+env/
+venv/
+# Azurite local emulator files
 __azurite_db*__.json
-__blobstorage__
-__queuestorage__
+__blobstorage__/
+__queuestorage__/
+__tablestorage__/
+# Local settings - never deploy secrets
 local.settings.json
-test
-.venv
+# Test data / sample data
+sample_data/
+test/
+*.zip
+
+# Git
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Other misc
+*.log
