@@ -5,27 +5,30 @@ from typing import Any, Dict, List
 import azure.functions as func
 import azure.durable_functions as df
 
-# Local service imports (you'll add these files in step 2)
+# Local services
 from services import schema, eda, ioc, anomaly, providers, report, storage
 
-# Create a Durable Functions app (v2 programming model)
-myApp = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+# Durable Functions app (Python v2 model)
+app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 # ----------- HTTP Starter -----------
-@myApp.route(route="start-analysis", methods=[func.HttpMethod.POST])
-@myApp.durable_client_input(client_name="client")
-async def http_start(req: func.HttpRequest, client: df.DurableOrchestrationClient) -> func.HttpResponse:
+@app.route(route="start-analysis", methods=[func.HttpMethod.POST])
+@app.durable_client_input(client_name="client")
+async def http_start(
+    req: func.HttpRequest,
+    client: df.DurableOrchestrationClient
+) -> func.HttpResponse:
     try:
         payload = req.get_json()
     except ValueError:
         return func.HttpResponse("Invalid JSON body.", status_code=400)
 
     instance_id = await client.start_new("AnalysisOrchestrator", None, payload)
-    logging.info(f"Started orchestration with ID = '{instance_id}'.")
+    logging.info("Started orchestration with ID = '%s'.", instance_id)
     return client.create_check_status_response(req, instance_id)
 
 # ----------- Report download -----------
-@myApp.route(route="report/{instance_id}", methods=[func.HttpMethod.GET])
+@app.route(route="report/{instance_id}", methods=[func.HttpMethod.GET])
 def get_report(req: func.HttpRequest) -> func.HttpResponse:
     instance_id = req.route_params.get("instance_id")
     if not instance_id:
@@ -40,9 +43,10 @@ def get_report(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(f"Error fetching report: {e}", status_code=500)
 
 # ----------- Orchestrator -----------
-@myApp.orchestration_trigger(context_name="context")
+@app.orchestration_trigger(context_name="context")
 def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, Any]:
     data = context.get_input()
+
     validated = yield context.call_activity("ValidateSchemaActivity", data)
     eda_result = yield context.call_activity("ExploratoryAnalysisActivity", validated)
     iocs = yield context.call_activity("ExtractIndicatorsActivity", validated)
@@ -52,6 +56,7 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
     ti_results = yield context.task_all(tasks)
 
     anomalies = yield context.call_activity("AnomalyDetectionActivity", validated)
+
     recs_input = {"eda": eda_result, "anomalies": anomalies, "ti_results": ti_results}
     recommendations = yield context.call_activity("RecommendationActivity", recs_input)
 
@@ -60,7 +65,7 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
         "eda": eda_result,
         "anomalies": anomalies,
         "ti_results": ti_results,
-        "recommendations": recommendations
+        "recommendations": recommendations,
     }
     report_info = yield context.call_activity("ReportGenerationActivity", report_input)
 
@@ -73,35 +78,34 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
         },
         "eda": eda_result,
         "anomalies": anomalies,
-        "report": report_info
+        "report": report_info,
     }
 
 # ----------- Activities -----------
-@myApp.activity_trigger(input_name="data", name="ValidateSchemaActivity")
+@app.activity_trigger(input_name="data", name="ValidateSchemaActivity")
 def ValidateSchemaActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return schema.validate_and_normalize(data)
 
-
-@myApp.activity_trigger(input_name="data")
+@app.activity_trigger(input_name="data")
 def ExploratoryAnalysisActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return eda.explore(data)
 
-@myApp.activity_trigger(input_name="data")
+@app.activity_trigger(input_name="data")
 def ExtractIndicatorsActivity(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return ioc.extract_iocs(data)
 
-@myApp.activity_trigger(input_name="ioc_item")
+@app.activity_trigger(input_name="ioc_item")
 def ThreatIntelEnrichmentActivity(ioc_item: Dict[str, Any]) -> Dict[str, Any]:
     return providers.enrich_ioc(ioc_item)
 
-@myApp.activity_trigger(input_name="data")
+@app.activity_trigger(input_name="data")
 def AnomalyDetectionActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return anomaly.detect(data)
 
-@myApp.activity_trigger(input_name="bundle")
+@app.activity_trigger(input_name="bundle")
 def RecommendationActivity(bundle: Dict[str, Any]):
     return report.recommendations(bundle)
 
-@myApp.activity_trigger(input_name="bundle")
+@app.activity_trigger(input_name="bundle")
 def ReportGenerationActivity(bundle: Dict[str, Any]) -> Dict[str, Any]:
     return report.generate_pdf_and_upload(bundle)
