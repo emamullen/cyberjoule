@@ -77,9 +77,10 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
     }
 
 # ----------- Activities -----------
-@myApp.activity_trigger(input_name="data")
+@myApp.activity_trigger(input_name="data", name="ValidateSchemaActivity")
 def ValidateSchemaActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return schema.validate_and_normalize(data)
+
 
 @myApp.activity_trigger(input_name="data")
 def ExploratoryAnalysisActivity(data: Dict[str, Any]) -> Dict[str, Any]:
