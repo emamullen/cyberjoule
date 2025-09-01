@@ -11,8 +11,8 @@ from services import schema, eda, ioc, anomaly, providers, report, storage
 app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 # -------------------- HTTP Starter --------------------
-# Order matters: trigger decorator (route) MUST be closest to `def`
-# and the durable client INPUT binding goes above it.
+# Order matters: keep the HTTP trigger decorator closest to `def`,
+# and put the durable client INPUT binding above it.
 @app.durable_client_input(client_name="client")  # binding (not a trigger)
 @app.route(route="start-analysis", methods=[func.HttpMethod.POST])  # the ONLY HTTP trigger
 async def start_analysis_http(
@@ -44,7 +44,7 @@ def get_report(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(f"Error fetching report: {e}", status_code=500)
 
 # -------------------- Orchestrator --------------------
-@app.orchestration_trigger(context_name="context", name="AnalysisOrchestrator")
+@app.orchestration_trigger(context_name="context")
 def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, Any]:
     data = context.get_input()
 
@@ -82,30 +82,30 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
     }
 
 # -------------------- Activities --------------------
-@app.activity_trigger(input_name="data", name="ValidateSchemaActivity")
+@app.activity_trigger(input_name="data")
 def ValidateSchemaActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return schema.validate_and_normalize(data)
 
-@app.activity_trigger(input_name="data", name="ExploratoryAnalysisActivity")
+@app.activity_trigger(input_name="data")
 def ExploratoryAnalysisActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return eda.explore(data)
 
-@app.activity_trigger(input_name="data", name="ExtractIndicatorsActivity")
+@app.activity_trigger(input_name="data")
 def ExtractIndicatorsActivity(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return ioc.extract_iocs(data)
 
-@app.activity_trigger(input_name="ioc_item", name="ThreatIntelEnrichmentActivity")
+@app.activity_trigger(input_name="ioc_item")
 def ThreatIntelEnrichmentActivity(ioc_item: Dict[str, Any]) -> Dict[str, Any]:
     return providers.enrich_ioc(ioc_item)
 
-@app.activity_trigger(input_name="data", name="AnomalyDetectionActivity")
+@app.activity_trigger(input_name="data")
 def AnomalyDetectionActivity(data: Dict[str, Any]) -> Dict[str, Any]:
     return anomaly.detect(data)
 
-@app.activity_trigger(input_name="bundle", name="RecommendationActivity")
+@app.activity_trigger(input_name="bundle")
 def RecommendationActivity(bundle: Dict[str, Any]):
     return report.recommendations(bundle)
 
-@app.activity_trigger(input_name="bundle", name="ReportGenerationActivity")
+@app.activity_trigger(input_name="bundle")
 def ReportGenerationActivity(bundle: Dict[str, Any]) -> Dict[str, Any]:
     return report.generate_pdf_and_upload(bundle)
