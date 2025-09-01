@@ -101,4 +101,13 @@ def ThreatIntelEnrichmentActivity(ioc_item: Dict[str, Any]) -> Dict[str, Any]:
     return providers.enrich_ioc(ioc_item)
 
 @dfapp.activity_trigger(input_name="data", name="AnomalyDetectionActivity")
-def Ano
+def AnomalyDetectionActivity(data: Dict[str, Any]) -> Dict[str, Any]:
+    return anomaly.detect(data)
+
+@dfapp.activity_trigger(input_name="bundle", name="RecommendationActivity")
+def RecommendationActivity(bundle: Dict[str, Any]):
+    return report.recommendations(bundle)
+
+@dfapp.activity_trigger(input_name="bundle", name="ReportGenerationActivity")
+def ReportGenerationActivity(bundle: Dict[str, Any]) -> Dict[str, Any]:
+    return report.generate_pdf_and_upload(bundle)
