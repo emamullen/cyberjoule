@@ -1,0 +1,7 @@
+.git/
+.vscode/
+__pycache__/
+local.settings.json
+tests/
+*.md
+*.zip
