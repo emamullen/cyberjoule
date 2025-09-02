@@ -1,45 +1,50 @@
 import os
-from typing import Optional
+import logging
 from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobServiceClient, ContentSettings
+from azure.storage.blob import BlobServiceClient
+from azure.core.exceptions import ResourceExistsError
 
-REPORTS_CONTAINER = "reports"
+REPORTS_CONTAINER = os.getenv("REPORTS_CONTAINER", "reports")
 
-def _get_conn() -> BlobServiceClient:
-    # Prefer connection string locally (Azurite or real account)
-    conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
-    if conn_str:
-        return BlobServiceClient.from_connection_string(conn_str)
-    # Managed Identity path (for Azure deployment)
-    account = os.getenv("AzureWebJobsStorage__accountName") or os.getenv("BLOB_ACCOUNT_NAME")
+def _blob_service_client() -> BlobServiceClient:
+    # Prefer explicit connection string, else Managed Identity via account name
+    cs = os.getenv("AZURE_STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
+    if cs:
+        logging.info("[STORAGE] using connection string")
+        return BlobServiceClient.from_connection_string(cs)
+
+    account = (os.getenv("AzureWebJobsStorage__accountName")
+               or os.getenv("BLOB_ACCOUNT_NAME"))
     if not account:
         raise RuntimeError("Storage not configured.")
-    url = f"https://{account}.blob.core.windows.net"
+    logging.info(f"[STORAGE] using MI; account={account}")
     cred = DefaultAzureCredential()
-    return BlobServiceClient(account_url=url, credential=cred)
+    return BlobServiceClient(account_url=f"https://{account}.blob.core.windows.net", credential=cred)
 
-def upload_report(local_path: str, instance_id: str) -> str:
-    bsc = _get_conn()
-    container = bsc.get_container_client(REPORTS_CONTAINER)
+def upload_report(instance_id: str, pdf_bytes: bytes) -> str:
+    svc = _blob_service_client()
+    # ensure container
+    cont = svc.get_container_client(REPORTS_CONTAINER)
     try:
-        container.create_container()
-    except Exception:
+        cont.create_container()
+        logging.info(f"[STORAGE] created container {REPORTS_CONTAINER}")
+    except ResourceExistsError:
         pass
-    blob_name = f"{instance_id}.pdf"
-    with open(local_path, "rb") as f:
-        container.upload_blob(
-            name=blob_name, data=f, overwrite=True,
-            content_settings=ContentSettings(content_type="application/pdf")
-        )
-    return f"{REPORTS_CONTAINER}/{blob_name}"
 
-def fetch_report_blob(instance_id: str) -> Optional[bytes]:
-    bsc = _get_conn()
-    container = bsc.get_container_client(REPORTS_CONTAINER)
     blob_name = f"{instance_id}.pdf"
-    blob_client = container.get_blob_client(blob_name)
+    cont.upload_blob(name=blob_name, data=pdf_bytes, overwrite=True,
+                     content_type="application/pdf")
+    path = f"{REPORTS_CONTAINER}/{blob_name}"
+    logging.info(f"[STORAGE] uploaded {path} ({len(pdf_bytes)} bytes)")
+    return path
+
+def fetch_report_blob(instance_id: str) -> bytes | None:
+    svc = _blob_service_client()
+    cont = svc.get_container_client(REPORTS_CONTAINER)
+    blob_name = f"{instance_id}.pdf"
+    blob = cont.get_blob_client(blob_name)
     try:
-        _ = blob_client.get_blob_properties()
-    except Exception:
+        return blob.download_blob().readall()
+    except Exception as e:
+        logging.warning(f"[STORAGE] fetch miss {REPORTS_CONTAINER}/{blob_name}: {e}")
         return None
-    return blob_client.download_blob().readall()
