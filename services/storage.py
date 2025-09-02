@@ -1,50 +1,86 @@
+# services/storage.py
 import os
 import logging
+from typing import Optional
+from urllib.parse import urlparse
+
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 REPORTS_CONTAINER = os.getenv("REPORTS_CONTAINER", "reports")
 
+
+def _account_name_from_env() -> Optional[str]:
+    # 1) direct
+    acct = os.getenv("AzureWebJobsStorage__accountName")
+    if acct:
+        return acct
+    # 2) derive from blobServiceUri
+    uri = os.getenv("AzureWebJobsStorage__blobServiceUri")
+    if uri:
+        try:
+            host = urlparse(uri).netloc  # e.g. mystorage.blob.core.windows.net
+            return host.split(".")[0] if host else None
+        except Exception:
+            pass
+    # 3) explicit override
+    return os.getenv("BLOB_ACCOUNT_NAME")
+
+
 def _blob_service_client() -> BlobServiceClient:
-    # Prefer explicit connection string, else Managed Identity via account name
+    """
+    Use either a connection string (AZURE_STORAGE_CONNECTION_STRING or AzureWebJobsStorage)
+    or Managed Identity (account name from *_accountName / *_blobServiceUri / BLOB_ACCOUNT_NAME).
+    """
     cs = os.getenv("AZURE_STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
-    if cs:
-        logging.info("[STORAGE] using connection string")
+    # Only treat as connection string if it contains a key or SAS
+    if cs and ("AccountKey=" in cs or "SharedAccessSignature=" in cs or "SharedAccessKey=" in cs):
+        logging.info("[STORAGE] Using connection string for blobs.")
         return BlobServiceClient.from_connection_string(cs)
 
-    account = (os.getenv("AzureWebJobsStorage__accountName")
-               or os.getenv("BLOB_ACCOUNT_NAME"))
+    account = _account_name_from_env()
     if not account:
-        raise RuntimeError("Storage not configured.")
-    logging.info(f"[STORAGE] using MI; account={account}")
+        raise RuntimeError("Storage not configured. "
+                           "Set AZURE_STORAGE_CONNECTION_STRING (with key/SAS) "
+                           "or BLOB_ACCOUNT_NAME / AzureWebJobsStorage__accountName.")
+    logging.info(f"[STORAGE] Using Managed Identity; account={account}")
     cred = DefaultAzureCredential()
     return BlobServiceClient(account_url=f"https://{account}.blob.core.windows.net", credential=cred)
 
-def upload_report(instance_id: str, pdf_bytes: bytes) -> str:
+
+def _container_client():
     svc = _blob_service_client()
-    # ensure container
     cont = svc.get_container_client(REPORTS_CONTAINER)
     try:
         cont.create_container()
-        logging.info(f"[STORAGE] created container {REPORTS_CONTAINER}")
+        logging.info(f"[STORAGE] Ensured container '{REPORTS_CONTAINER}'.")
     except ResourceExistsError:
         pass
+    return cont
 
+
+def upload_report(instance_id: str, pdf_bytes: bytes) -> str:
+    cont = _container_client()
     blob_name = f"{instance_id}.pdf"
-    cont.upload_blob(name=blob_name, data=pdf_bytes, overwrite=True,
-                     content_type="application/pdf")
+    logging.info(f"[STORAGE] Uploading {REPORTS_CONTAINER}/{blob_name} ({len(pdf_bytes)} bytes).")
+    cont.upload_blob(name=blob_name, data=pdf_bytes, overwrite=True, content_type="application/pdf")
     path = f"{REPORTS_CONTAINER}/{blob_name}"
-    logging.info(f"[STORAGE] uploaded {path} ({len(pdf_bytes)} bytes)")
+    logging.info(f"[STORAGE] Uploaded {path}.")
     return path
 
+
 def fetch_report_blob(instance_id: str) -> bytes | None:
-    svc = _blob_service_client()
-    cont = svc.get_container_client(REPORTS_CONTAINER)
+    cont = _container_client()
     blob_name = f"{instance_id}.pdf"
     blob = cont.get_blob_client(blob_name)
     try:
-        return blob.download_blob().readall()
+        data = blob.download_blob().readall()
+        logging.info(f"[STORAGE] Fetched {REPORTS_CONTAINER}/{blob_name} ({len(data)} bytes).")
+        return data
+    except ResourceNotFoundError:
+        logging.warning(f"[STORAGE] Report not found: {REPORTS_CONTAINER}/{blob_name}.")
+        return None
     except Exception as e:
-        logging.warning(f"[STORAGE] fetch miss {REPORTS_CONTAINER}/{blob_name}: {e}")
+        logging.exception(f"[STORAGE] Error fetching {REPORTS_CONTAINER}/{blob_name}: {e}")
         return None
