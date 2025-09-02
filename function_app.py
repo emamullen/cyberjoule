@@ -5,17 +5,25 @@ from typing import Any, Dict, List
 import azure.functions as func
 import azure.durable_functions as df
 
+# Import pure-Python helpers (no decorators here)
 from services import schema, eda, ioc, anomaly, providers, report, storage
 
 # One DFApp for everything (HTTP + Durable)
 app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-# -------- HTTP starter --------
+# ---------- Diagnostics (optional) ----------
+@app.function_name("Ping")
+@app.route(route="ping", methods=[func.HttpMethod.GET])
+def ping(_: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse("ok", status_code=200)
+
+# ---------- HTTP starter ----------
 @app.function_name("StartAnalysisHttp")
-@app.durable_client_input(client_name="client")            # input binding
+@app.durable_client_input(client_name="client")  # input binding
 @app.route(route="start-analysis", methods=[func.HttpMethod.POST])  # trigger
-async def start_analysis_http(req: func.HttpRequest,
-                              client: df.DurableOrchestrationClient) -> func.HttpResponse:
+async def start_analysis_http(
+    req: func.HttpRequest, client: df.DurableOrchestrationClient
+) -> func.HttpResponse:
     try:
         payload = req.get_json()
     except ValueError:
@@ -25,7 +33,7 @@ async def start_analysis_http(req: func.HttpRequest,
     logging.info("Started orchestration with ID = '%s'.", instance_id)
     return client.create_check_status_response(req, instance_id)
 
-# -------- Report download --------
+# ---------- Report download ----------
 @app.function_name("GetReport")
 @app.route(route="report/{instance_id}", methods=[func.HttpMethod.GET])
 def get_report(req: func.HttpRequest) -> func.HttpResponse:
@@ -41,7 +49,7 @@ def get_report(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("Error fetching report")
         return func.HttpResponse(f"Error fetching report: {e}", status_code=500)
 
-# -------- Orchestrator --------
+# ---------- Orchestrator ----------
 @app.function_name("AnalysisOrchestrator")
 @app.orchestration_trigger(context_name="context")
 def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, Any]:
@@ -80,7 +88,7 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
         "report": report_info,
     }
 
-# -------- Activities (explicit names) --------
+# ---------- Activities (explicit names) ----------
 @app.function_name("ValidateSchemaActivity")
 @app.activity_trigger(input_name="data")
 def ValidateSchemaActivity(data: Dict[str, Any]) -> Dict[str, Any]:
