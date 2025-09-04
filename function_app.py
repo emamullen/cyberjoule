@@ -10,20 +10,26 @@ from services import schema, eda, ioc, anomaly, providers, report, storage
 # One DFApp for everything (HTTP + Durable)
 app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-# -------- HTTP starter --------
+# -------- HTTP starter (now does validation/normalization) --------
 @app.function_name("StartAnalysisHttp")
-@app.durable_client_input(client_name="client")            # input binding
-@app.route(route="start-analysis", methods=[func.HttpMethod.POST])  # trigger
+@app.durable_client_input(client_name="client")
+@app.route(route="start-analysis", methods=[func.HttpMethod.POST])
 async def start_analysis_http(
-    req: func.HttpRequest,
-    client: df.DurableOrchestrationClient
+    req: func.HttpRequest, client: df.DurableOrchestrationClient
 ) -> func.HttpResponse:
     try:
-        payload = req.get_json()
+        raw_payload = req.get_json()
     except ValueError:
         return func.HttpResponse("Invalid JSON body.", status_code=400)
 
-    instance_id = await client.start_new("AnalysisOrchestrator", None, payload)
+    # Moved from ValidateSchemaActivity → inline, synchronous
+    try:
+        normalized = schema.validate_and_normalize(raw_payload)
+    except Exception as e:
+        # Make schema errors visible to the caller
+        return func.HttpResponse(f"Schema validation failed: {e}", status_code=400)
+
+    instance_id = await client.start_new("AnalysisOrchestrator", None, normalized)
     logging.info("Started orchestration with ID = '%s'.", instance_id)
     return client.create_check_status_response(req, instance_id)
 
@@ -43,13 +49,13 @@ def get_report(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("Error fetching report")
         return func.HttpResponse(f"Error fetching report: {e}", status_code=500)
 
-# -------- Orchestrator --------
+# -------- Orchestrator (no call to ValidateSchemaActivity) --------
 @app.function_name("AnalysisOrchestrator")
 @app.orchestration_trigger(context_name="context")
 def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, Any]:
-    data = context.get_input()
+    # Input is already validated & normalized by HTTP starter
+    validated = context.get_input()
 
-    validated   = yield context.call_activity("ValidateSchemaActivity", data)
     eda_result  = yield context.call_activity("ExploratoryAnalysisActivity", validated)
     iocs        = yield context.call_activity("ExtractIndicatorsActivity", validated)
 
@@ -73,21 +79,16 @@ def AnalysisOrchestrator(context: df.DurableOrchestrationContext) -> Dict[str, A
     return {
         "instance_id": context.instance_id,
         "counts": {
-            "events": eda_result.get("total_events", 0),
+            "events": eda_result.get("total_events", 0) if isinstance(eda_result, dict) else 0,
             "iocs": len(iocs or []),
-            "ti_hits": sum(1 for r in ti_results if r.get("hit")),
+            "ti_hits": sum(1 for r in (ti_results or []) if r.get("hit")),
         },
         "eda": eda_result,
         "anomalies": anomalies,
         "report": report_info,
     }
 
-# -------- Activities (explicit names) --------
-@app.function_name("ValidateSchemaActivity")
-@app.activity_trigger(input_name="data")
-def ValidateSchemaActivity(data: Dict[str, Any]) -> Dict[str, Any]:
-    return schema.validate_and_normalize(data)
-
+# -------- Activities (unchanged, EXCEPT we removed ValidateSchemaActivity) --------
 @app.function_name("ExploratoryAnalysisActivity")
 @app.activity_trigger(input_name="data")
 def ExploratoryAnalysisActivity(data: Dict[str, Any]) -> Dict[str, Any]:
